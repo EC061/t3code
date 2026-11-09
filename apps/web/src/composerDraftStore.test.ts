@@ -1874,6 +1874,34 @@ describe("composerDraftStore sticky composer settings", () => {
     );
   });
 
+  it("scopes cyberAccessProgram per model across sticky model switches and restores remembered selection", () => {
+    const store = useComposerDraftStore.getState();
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-cyber-sticky"));
+
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-6-sol"));
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "high", cyberAccessProgram: "daybreakBlue" }),
+      { instanceId: CODEX_INSTANCE, model: "gpt-6-sol", persistSticky: true },
+    );
+
+    store.setStickyModelSelection(modelSelection(CODEX_DRIVER, "gpt-6-luna"));
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-6-luna", {
+        reasoningEffort: "high",
+      }),
+    );
+
+    store.setStickyModelSelection(modelSelection(CODEX_DRIVER, "gpt-6-sol"));
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-6-sol", {
+        reasoningEffort: "high",
+        cyberAccessProgram: "daybreakBlue",
+      }),
+    );
+  });
+
   it("applies sticky activeProvider to new drafts", () => {
     const store = useComposerDraftStore.getState();
     const threadId = ThreadId.make("thread-sticky-active-provider");

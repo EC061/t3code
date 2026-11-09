@@ -73,6 +73,12 @@ import type * as ProviderContinuationRequests from "@t3tools/provider-core/serve
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
+import {
+  buildExplicitProviderOptionSelectionsFromDescriptors,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
+import { codexModelCyberAccessPrograms } from "../../codexModelOptions.ts";
+import { mapCodexModelCapabilities } from "../../provider/CodexProvider.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
@@ -254,6 +260,198 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
+  );
+
+  it.effect(
+    "resolves and forwards cyberAccessProgram across Standard, Daybreak Blue, Daybreak Red, fallbacks, and model switches without silent escalation",
+    () =>
+      Effect.gen(function* () {
+        const policy = {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+        } as const;
+        const instanceId = ProviderInstanceId.make("codex");
+        const build = (
+          model: string,
+          cyberAccessProgram?: string,
+          availableCyberAccessPrograms?: ReadonlyArray<"standard" | "daybreakBlue" | "daybreakRed">,
+        ) =>
+          CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: "native-cyber-access",
+            codexInput: [{ type: "text", text: "security test" }],
+            runtimePolicy: policy,
+            modelSelection: {
+              instanceId,
+              model,
+              ...(cyberAccessProgram === undefined
+                ? {}
+                : { options: [{ id: "cyberAccessProgram", value: cyberAccessProgram }] }),
+            },
+            ...(availableCyberAccessPrograms === undefined ? {} : { availableCyberAccessPrograms }),
+          });
+
+        const catalogModels = [
+          {
+            slug: "gpt-6.1-sol",
+            name: "GPT-6.1 Sol",
+            isCustom: false,
+            capabilities: mapCodexModelCapabilities({
+              id: "gpt-6.1-sol",
+              model: "gpt-6.1-sol",
+              displayName: "gpt-6.1-sol",
+              description: "Standard-only model",
+              isDefault: false,
+              defaultReasoningEffort: "low",
+              supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }],
+              inputModalities: ["text"],
+              supportsPersonality: false,
+              upgrade: null,
+              availableAccessPrograms: { cyber: ["standard"] },
+            }),
+          },
+          {
+            slug: "gpt-6-sol",
+            name: "GPT-6 Sol",
+            isCustom: false,
+            capabilities: mapCodexModelCapabilities({
+              id: "gpt-6-sol",
+              model: "gpt-6-sol",
+              displayName: "gpt-6-sol",
+              description: "Dual-mode model",
+              isDefault: true,
+              defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Medium" }],
+              inputModalities: ["text"],
+              supportsPersonality: false,
+              upgrade: null,
+              availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+            }),
+          },
+          {
+            slug: "gpt-daybreak-blue-latest",
+            name: "Daybreak Blue",
+            isCustom: false,
+            capabilities: mapCodexModelCapabilities({
+              id: "gpt-daybreak-blue-latest",
+              model: "gpt-daybreak-blue-latest",
+              displayName: "Daybreak Blue",
+              description: "Dedicated Daybreak Blue model",
+              isDefault: false,
+              defaultReasoningEffort: "low",
+              supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }],
+              inputModalities: ["text"],
+              supportsPersonality: false,
+              upgrade: null,
+              availableAccessPrograms: { cyber: ["daybreakBlue"] },
+            }),
+          },
+        ] as const;
+
+        // 1. Standard-only model via production codexModelCyberAccessPrograms lookup (returns []) omits cyberAccessProgram even with stale Daybreak selection
+        const standardOnlyPrograms = codexModelCyberAccessPrograms(catalogModels, "gpt-6.1-sol");
+        assert.deepEqual(standardOnlyPrograms, []);
+
+        const standardOnlyDefault = yield* build("gpt-6.1-sol", undefined, standardOnlyPrograms);
+        assert.isUndefined(standardOnlyDefault.cyberAccessProgram);
+
+        const switchedFromDaybreakToStandardOnly = yield* build(
+          "gpt-6.1-sol",
+          "daybreakBlue",
+          standardOnlyPrograms,
+        );
+        assert.isUndefined(switchedFromDaybreakToStandardOnly.cyberAccessProgram);
+
+        // 2. Daybreak Blue-only model defaults to daybreakBlue, accepts explicit daybreakBlue, and never silently escalates explicit standard
+        const blueOnlyPrograms = codexModelCyberAccessPrograms(
+          catalogModels,
+          "gpt-daybreak-blue-latest",
+        );
+        assert.deepEqual(blueOnlyPrograms, ["daybreakBlue"]);
+
+        const blueOnlyDefault = yield* build(
+          "gpt-daybreak-blue-latest",
+          undefined,
+          blueOnlyPrograms,
+        );
+        assert.equal(blueOnlyDefault.cyberAccessProgram, "daybreakBlue");
+
+        const blueOnlyExplicit = yield* build(
+          "gpt-daybreak-blue-latest",
+          "daybreakBlue",
+          blueOnlyPrograms,
+        );
+        assert.equal(blueOnlyExplicit.cyberAccessProgram, "daybreakBlue");
+
+        const blueOnlyWithStandard = yield* build(
+          "gpt-daybreak-blue-latest",
+          "standard",
+          blueOnlyPrograms,
+        );
+        assert.isUndefined(blueOnlyWithStandard.cyberAccessProgram);
+
+        // Composed frontend normalization -> server turn/start resolution on Daybreak-only model:
+        // explicit "standard" or unsupported "daybreakRed" must never silently escalate to "daybreakBlue".
+        const blueOnlyCaps = catalogModels[2].capabilities;
+        for (const rawProgram of ["standard", "daybreakRed"] as const) {
+          const rawSelections = [{ id: "cyberAccessProgram", value: rawProgram }];
+          const descriptors = getProviderOptionDescriptors({
+            caps: blueOnlyCaps,
+            selections: rawSelections,
+          });
+          const dispatchedOptions = buildExplicitProviderOptionSelectionsFromDescriptors(
+            descriptors,
+            rawSelections,
+          );
+          const composedTurnStart = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: "native-cyber-access",
+            codexInput: [{ type: "text", text: "security test" }],
+            runtimePolicy: policy,
+            modelSelection: {
+              instanceId,
+              model: "gpt-daybreak-blue-latest",
+              ...(dispatchedOptions ? { options: dispatchedOptions } : {}),
+            },
+            availableCyberAccessPrograms: blueOnlyPrograms,
+          });
+          assert.isUndefined(composedTurnStart.cyberAccessProgram);
+        }
+
+        // 3. Model supporting Standard and Daybreak Blue defaults to standard and honors explicit selections
+        const dualPrograms = codexModelCyberAccessPrograms(catalogModels, "gpt-6-sol");
+        assert.deepEqual(dualPrograms, ["standard", "daybreakBlue"]);
+
+        const dualDefault = yield* build("gpt-6-sol", undefined, dualPrograms);
+        assert.equal(dualDefault.cyberAccessProgram, "standard");
+
+        const dualExplicitStandard = yield* build("gpt-6-sol", "standard", dualPrograms);
+        assert.equal(dualExplicitStandard.cyberAccessProgram, "standard");
+
+        const dualExplicitBlue = yield* build("gpt-6-sol", "daybreakBlue", dualPrograms);
+        assert.equal(dualExplicitBlue.cyberAccessProgram, "daybreakBlue");
+
+        // 4. Unsupported or invalid program falls back to standard when available
+        const unsupportedRedOnDual = yield* build("gpt-6-sol", "daybreakRed", dualPrograms);
+        assert.equal(unsupportedRedOnDual.cyberAccessProgram, "standard");
+
+        const invalidProgramOnDual = yield* build("gpt-6-sol", "not-a-program", dualPrograms);
+        assert.equal(invalidProgramOnDual.cyberAccessProgram, "standard");
+
+        const invalidProgramWithoutCatalog = yield* build("gpt-6-sol", "not-a-program");
+        assert.isUndefined(invalidProgramWithoutCatalog.cyberAccessProgram);
+
+        // 5. Advertised Daybreak Red is forwarded when supported
+        const explicitRed = yield* build("gpt-6-sol", "daybreakRed", [
+          "standard",
+          "daybreakBlue",
+          "daybreakRed",
+        ]);
+        assert.equal(explicitRed.cyberAccessProgram, "daybreakRed");
+
+        // 6. Older Codex App Server versions without advertised access programs omit cyberAccessProgram
+        const olderAppServer = yield* build("gpt-5.4", "daybreakBlue", []);
+        assert.isUndefined(olderAppServer.cyberAccessProgram);
+      }),
   );
 });
 
@@ -2492,6 +2690,128 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         yield* harness.firstTerminal;
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("forwards cyberAccessProgram on turn/start across initial and continuation turns", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "daybreak-thread";
+        const firstTurnId = "daybreak-turn-1";
+        const secondTurnId = "daybreak-turn-2";
+        const daybreakSelection: ModelSelection = {
+          instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+          model: "gpt-6-sol",
+          options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+        };
+        const firstTurnParams = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: "first security question" }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: daybreakSelection,
+        });
+        const secondTurnParams = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: "follow-up security question" }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: daybreakSelection,
+        });
+        assert.equal(firstTurnParams.cyberAccessProgram, "daybreakBlue");
+        assert.equal(secondTurnParams.cyberAccessProgram, "daybreakBlue");
+
+        const entries = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: firstTurnId,
+          prompt: "first security question",
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "daybreak-continuation",
+          entries: [
+            ...entries.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "first turn/start with daybreakBlue",
+              frame: { id: 3, method: "turn/start", params: firstTurnParams },
+            },
+            ...entries.slice(6),
+            {
+              type: "emit_inbound",
+              label: "first turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: firstTurnId, status: "completed" }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "second turn/start with daybreakBlue",
+              frame: { id: 4, method: "turn/start", params: secondTurnParams },
+            },
+            {
+              type: "emit_inbound",
+              label: "second turn/start result",
+              frame: {
+                id: 4,
+                result: {
+                  turn: makeCodexReplayTurn({ id: secondTurnId, status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "second turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: secondTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("daybreak-attempt-1"),
+            text: "first security question",
+          }),
+          modelSelection: daybreakSelection,
+        });
+        yield* harness.awaitTerminal(1);
+
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("daybreak-attempt-2"),
+            text: "follow-up security question",
+          }),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          modelSelection: daybreakSelection,
+        });
+        yield* harness.awaitTerminal(2);
+        assert.equal(harness.terminalEvents().length, 2);
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

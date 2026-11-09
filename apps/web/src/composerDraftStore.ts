@@ -2904,10 +2904,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const current = state.stickyModelSelectionByProvider[normalized.instanceId];
             // Model-only updates omit options; preserve sticky traits across model switches and new chats.
+            const carriedOptions =
+              current?.model === normalized.model
+                ? current.options
+                : (state.stickyOptionsByModelByProvider[normalized.instanceId]?.[
+                    normalized.model
+                  ] ?? current?.options?.filter((option) => option.id !== "cyberAccessProgram"));
             const nextSelection =
               normalized.options !== undefined
                 ? normalized
-                : createModelSelection(normalized.instanceId, normalized.model, current?.options);
+                : createModelSelection(normalized.instanceId, normalized.model, carriedOptions);
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,
