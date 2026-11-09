@@ -9,6 +9,7 @@ import {
 import {
   getComposerProviderState,
   getComposerReasoningStep,
+  withImplicitCyberAccessProgramDefault,
   withImplicitFastModeDefault,
 } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
@@ -207,6 +208,79 @@ describe("getComposerProviderState", () => {
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
   });
+
+  it("dispatches cyberAccessProgram for Daybreak-capable models and strips it on Standard-only models without silent escalation", () => {
+    const solDescriptors = [
+      selectDescriptor("reasoningEffort", [{ id: "medium", label: "Medium", isDefault: true }]),
+      selectDescriptor("cyberAccessProgram", [
+        { id: "standard", label: "Standard", isDefault: true },
+        { id: "daybreakBlue", label: "Daybreak Blue" },
+      ]),
+    ];
+    const daybreakOnlyDescriptors = [
+      selectDescriptor("reasoningEffort", [{ id: "medium", label: "Medium", isDefault: true }]),
+      selectDescriptor("cyberAccessProgram", [
+        { id: "daybreakBlue", label: "Daybreak Blue", isDefault: true },
+      ]),
+    ];
+    const standardOnlyDescriptors = [
+      selectDescriptor("reasoningEffort", [{ id: "medium", label: "Medium", isDefault: true }]),
+    ];
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(solDescriptors),
+        modelOptions: undefined,
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["cyberAccessProgram", "standard"]));
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(solDescriptors),
+        modelOptions: selections(["cyberAccessProgram", "daybreakBlue"]),
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["cyberAccessProgram", "daybreakBlue"]));
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(solDescriptors),
+        modelOptions: selections(["cyberAccessProgram", "daybreakRed"]),
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["cyberAccessProgram", "standard"]));
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(daybreakOnlyDescriptors),
+        modelOptions: undefined,
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["cyberAccessProgram", "daybreakBlue"]));
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(daybreakOnlyDescriptors),
+        modelOptions: selections(["cyberAccessProgram", "standard"]),
+      }).modelOptionsForDispatch,
+    ).toBeUndefined();
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(standardOnlyDescriptors),
+        modelOptions: selections(["cyberAccessProgram", "daybreakBlue"]),
+      }).modelOptionsForDispatch,
+    ).toBeUndefined();
+  });
 });
 
 describe("withImplicitFastModeDefault", () => {
@@ -229,6 +303,28 @@ describe("withImplicitFastModeDefault", () => {
         selections(["fastMode", true]),
       ),
     ).toEqual(selections(["fastMode", true]));
+  });
+});
+
+describe("withImplicitCyberAccessProgramDefault", () => {
+  it("injects default cyberAccessProgram only when the model exposes cyberAccessProgram and no selection exists", () => {
+    const caps = {
+      optionDescriptors: [
+        selectDescriptor("cyberAccessProgram", [
+          { id: "standard", label: "Standard", isDefault: true },
+          { id: "daybreakBlue", label: "Daybreak Blue" },
+        ]),
+      ],
+    };
+    expect(withImplicitCyberAccessProgramDefault(caps, undefined)).toEqual(
+      selections(["cyberAccessProgram", "standard"]),
+    );
+    expect(
+      withImplicitCyberAccessProgramDefault(
+        caps,
+        selections(["cyberAccessProgram", "daybreakBlue"]),
+      ),
+    ).toEqual(selections(["cyberAccessProgram", "daybreakBlue"]));
   });
 });
 

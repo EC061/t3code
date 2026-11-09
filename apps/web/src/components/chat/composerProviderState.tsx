@@ -79,6 +79,29 @@ export function withImplicitFastModeDefault(
   return [...(modelOptions ?? []), { id: "fastMode", value: false }];
 }
 
+export function withImplicitCyberAccessProgramDefault(
+  caps: ModelCapabilities,
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const hasExplicitCyberAccessProgram = modelOptions?.some(
+    (selection) => selection.id === "cyberAccessProgram",
+  );
+  if (hasExplicitCyberAccessProgram) {
+    return modelOptions ?? undefined;
+  }
+  const descriptor = caps.optionDescriptors?.find(
+    (entry) => entry.type === "select" && entry.id === "cyberAccessProgram",
+  );
+  if (!descriptor) {
+    return modelOptions ?? undefined;
+  }
+  const defaultValue = getProviderOptionCurrentValue(descriptor);
+  if (typeof defaultValue !== "string") {
+    return modelOptions ?? undefined;
+  }
+  return [...(modelOptions ?? []), { id: "cyberAccessProgram", value: defaultValue }];
+}
+
 function resolveComposerOptionSelections(
   models: ReadonlyArray<ServerProviderModel>,
   model: string,
@@ -90,7 +113,13 @@ function resolveComposerOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection> | undefined;
 } {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
-  return { caps, selections: withImplicitFastModeDefault(caps, modelOptions) };
+  return {
+    caps,
+    selections: withImplicitCyberAccessProgramDefault(
+      caps,
+      withImplicitFastModeDefault(caps, modelOptions),
+    ),
+  };
 }
 
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {

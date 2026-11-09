@@ -150,6 +150,11 @@ function resolveDescriptorChoiceValue(
   if (descriptor.options.some((option) => option.id === trimmed)) {
     return trimmed;
   }
+  if (descriptor.id === "cyberAccessProgram") {
+    return trimmed === "standard"
+      ? undefined
+      : descriptor.options.find((option) => option.id === "standard")?.id;
+  }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
 }
 
@@ -284,6 +289,9 @@ export function getProviderOptionCurrentValue(
   }
   if (descriptor.currentValue) {
     return descriptor.currentValue;
+  }
+  if (descriptor.id === "cyberAccessProgram") {
+    return undefined;
   }
   return descriptor.options.find((option) => option.isDefault)?.id;
 }

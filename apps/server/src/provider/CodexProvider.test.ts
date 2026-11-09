@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
+import { codexModelCyberAccessPrograms } from "../codexModelOptions.ts";
 import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
@@ -111,6 +112,144 @@ it("uses standard routing when the catalog has no default service tier", () => {
       currentValue: "default",
     },
   ]);
+});
+
+it("omits Cyber Access selector for Standard-only models and older Codex versions", () => {
+  const standardOnly = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: { cyber: ["standard"] },
+    defaultReasoningEffort: "medium",
+    description: "GPT-6.1 Sol",
+    displayName: "GPT-6.1-Sol",
+    hidden: false,
+    id: "gpt-6.1-sol",
+    isDefault: false,
+    model: "gpt-6.1-sol",
+    supportedReasoningEfforts: [{ description: "Medium", reasoningEffort: "medium" }],
+  });
+  assert.isUndefined(
+    standardOnly.optionDescriptors?.find((descriptor) => descriptor.id === "cyberAccessProgram"),
+  );
+
+  const legacyNull = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: null,
+    defaultReasoningEffort: "medium",
+    description: "Legacy model",
+    displayName: "GPT-5.4",
+    hidden: false,
+    id: "gpt-5.4",
+    isDefault: true,
+    model: "gpt-5.4",
+    supportedReasoningEfforts: [{ description: "Medium", reasoningEffort: "medium" }],
+  });
+  assert.isUndefined(
+    legacyNull.optionDescriptors?.find((descriptor) => descriptor.id === "cyberAccessProgram"),
+  );
+});
+
+it("maps Cyber Access programs for Standard + Daybreak Blue, Daybreak Blue-only, and Daybreak Red models", () => {
+  const solCapabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+    defaultReasoningEffort: "medium",
+    description: "GPT-6 Sol",
+    displayName: "GPT-6-Sol",
+    hidden: false,
+    id: "gpt-6-sol",
+    isDefault: false,
+    model: "gpt-6-sol",
+    supportedReasoningEfforts: [{ description: "Medium", reasoningEffort: "medium" }],
+  });
+  assert.deepStrictEqual(
+    solCapabilities.optionDescriptors?.find((descriptor) => descriptor.id === "cyberAccessProgram"),
+    {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        { id: "standard", label: "Standard", isDefault: true },
+        { id: "daybreakBlue", label: "Daybreak Blue" },
+      ],
+      currentValue: "standard",
+    },
+  );
+
+  const daybreakOnlyCapabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: { cyber: ["daybreakBlue"] },
+    defaultReasoningEffort: "medium",
+    description: "Dedicated Daybreak Blue model",
+    displayName: "gpt-daybreak-blue-latest",
+    hidden: true,
+    id: "gpt-daybreak-blue-latest",
+    isDefault: false,
+    model: "gpt-daybreak-blue-latest",
+    supportedReasoningEfforts: [{ description: "Medium", reasoningEffort: "medium" }],
+  });
+  assert.deepStrictEqual(
+    daybreakOnlyCapabilities.optionDescriptors?.find(
+      (descriptor) => descriptor.id === "cyberAccessProgram",
+    ),
+    {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [{ id: "daybreakBlue", label: "Daybreak Blue", isDefault: true }],
+      currentValue: "daybreakBlue",
+    },
+  );
+
+  const redCapabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue", "daybreakRed"] },
+    defaultReasoningEffort: "high",
+    description: "Red authorized model",
+    displayName: "GPT-6-Sol",
+    hidden: false,
+    id: "gpt-6-sol",
+    isDefault: false,
+    model: "gpt-6-sol",
+    supportedReasoningEfforts: [{ description: "High", reasoningEffort: "high" }],
+  });
+  assert.deepStrictEqual(
+    redCapabilities.optionDescriptors?.find((descriptor) => descriptor.id === "cyberAccessProgram"),
+    {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        { id: "standard", label: "Standard", isDefault: true },
+        { id: "daybreakBlue", label: "Daybreak Blue" },
+        { id: "daybreakRed", label: "Daybreak Red" },
+      ],
+      currentValue: "standard",
+    },
+  );
+
+  const models = [
+    { slug: "gpt-6-sol", name: "GPT-6 Sol", isCustom: false, capabilities: solCapabilities },
+    {
+      slug: "gpt-daybreak-blue-latest",
+      name: "GPT Daybreak Blue Latest",
+      isCustom: false,
+      capabilities: daybreakOnlyCapabilities,
+    },
+    { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false, capabilities: null },
+  ];
+  assert.deepStrictEqual(codexModelCyberAccessPrograms(models, "gpt-6-sol"), [
+    "standard",
+    "daybreakBlue",
+  ]);
+  assert.deepStrictEqual(codexModelCyberAccessPrograms(models, "openai.gpt-6-sol"), [
+    "standard",
+    "daybreakBlue",
+  ]);
+  assert.deepStrictEqual(codexModelCyberAccessPrograms(models, "gpt-daybreak-blue-latest"), [
+    "daybreakBlue",
+  ]);
+  assert.deepStrictEqual(codexModelCyberAccessPrograms(models, "gpt-6.1-sol"), []);
+  assert.isUndefined(codexModelCyberAccessPrograms(models, "unknown-model"));
 });
 
 it("marks the most preferred available model as default", () => {

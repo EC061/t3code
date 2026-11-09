@@ -21,6 +21,7 @@ import {
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
 } from "../CodexProvider.ts";
+import { codexModelCyberAccessPrograms } from "../../codexModelOptions.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
@@ -245,6 +246,10 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
     resolveRuntime: runtime.resolve,
+    availableCyberAccessPrograms: (model) =>
+      snapshot.getSnapshot.pipe(
+        Effect.map((value) => codexModelCyberAccessPrograms(value.models, model)),
+      ),
   }).pipe(
     Effect.mapError(
       (cause) =>

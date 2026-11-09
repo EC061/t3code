@@ -371,6 +371,142 @@ describe("orchestrator replay recovery", () => {
   );
 
   it.effect(
+    "persists cyberAccessProgram across server restarts and forwards it when resuming a Codex thread",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const workspace = yield* checkpointWorkspace("provider_thread_resume");
+          const rawTranscript = yield* readRawTranscript(
+            new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
+          );
+          const materializedTranscript = materializeReplayTranscriptWorkspace(
+            rawTranscript,
+            workspace,
+          );
+          const transcriptWithDaybreak = yield* decodeCodexTranscript({
+            ...materializedTranscript,
+            entries: materializedTranscript.entries.map((entry) => {
+              if (
+                entry.type === "expect_outbound" &&
+                typeof entry.frame === "object" &&
+                entry.frame !== null &&
+                Reflect.get(entry.frame, "method") === "turn/start"
+              ) {
+                const frame = entry.frame as {
+                  readonly id: number;
+                  readonly method: string;
+                  readonly params: Record<string, unknown>;
+                };
+                return {
+                  ...entry,
+                  frame: {
+                    ...frame,
+                    params: {
+                      ...frame.params,
+                      cyberAccessProgram: "daybreakBlue",
+                    },
+                  },
+                };
+              }
+              return entry;
+            }),
+          });
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* Effect.acquireRelease(
+            fs.makeTempDirectory({
+              prefix: "t3-orchestration-v2-daybreak-recovery-",
+            }),
+            (directory) =>
+              fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+          );
+          yield* fs.makeDirectory(tempDir, { recursive: true });
+          const dbPath = path.join(tempDir, "state.sqlite");
+          const driver = yield* CodexReplay.makeReplayDriver(transcriptWithDaybreak);
+          const daybreakModelSelection = {
+            ...CODEX_MODEL_SELECTION,
+            options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+          };
+          const materialized = yield* materializeFixtureInput({
+            scenario: "provider_thread_resume",
+            fixtureInput: {
+              steps: [
+                { type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT },
+                { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
+              ],
+            },
+            driver: ProviderDriverKind.make("codex"),
+            modelSelection: daybreakModelSelection,
+          });
+          const { phase1Commands, phase1Steps, phase2Steps } = splitAfterFirstIdle(materialized);
+          // Strip modelSelection from the second turn's dispatch so the resumed runtime must read it from SQLite.
+          const phase2StepsWithoutExplicitSelection = phase2Steps.map((step) => {
+            if (step.type === "dispatch" && step.command.type === "message.dispatch") {
+              const { modelSelection: _omitted, ...restCommand } = step.command;
+              return { ...step, command: restCommand };
+            }
+            return step;
+          });
+          const phase2CommandsWithoutExplicitSelection =
+            phase2StepsWithoutExplicitSelection.flatMap((step) =>
+              step.type === "dispatch" ? [step.command] : [],
+            );
+
+          const harness = {
+            ...CodexOrchestratorReplayHarness,
+            makeProviderAdapterRegistryLayer: () =>
+              CodexAdapterV2Testkit.layer({ transcript: transcriptWithDaybreak, driver }),
+          };
+          const options = {
+            databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          };
+
+          yield* runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/codex-daybreak:first-runtime",
+              transcript: transcriptWithDaybreak,
+              commands: phase1Commands,
+              steps: phase1Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
+            },
+            harness,
+            options,
+          );
+
+          const result = yield* runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/codex-daybreak:second-runtime",
+              transcript: transcriptWithDaybreak,
+              commands: phase2CommandsWithoutExplicitSelection,
+              steps: phase2StepsWithoutExplicitSelection,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
+            },
+            harness,
+            { ...options, recoverOnStartup: true },
+          );
+
+          const projection = projectionFor(result, transcriptWithDaybreak.scenario);
+          assert.deepEqual(
+            projection.thread.modelSelection.options?.find(
+              (option) => option.id === "cyberAccessProgram",
+            ),
+            { id: "cyberAccessProgram", value: "daybreakBlue" },
+          );
+          assertRunOrdinals(projection, [1, 2]);
+        }).pipe(
+          provideDeterministicTestRuntime,
+          Effect.provide(
+            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
     "resumes a provider-native Cursor thread after recreating the orchestrator runtime",
     () =>
       Effect.scoped(

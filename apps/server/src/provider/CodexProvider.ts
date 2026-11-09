@@ -52,6 +52,7 @@ import {
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
+import { CYBER_ACCESS_PROGRAM_OPTION_ID } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
@@ -111,6 +112,14 @@ const DEFAULT_SERVICE_TIER_ID = "default";
 
 const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
   ultrafast: "Even faster, more expensive",
+};
+
+const CYBER_ACCESS_PROGRAM_LABELS: Readonly<
+  Record<CodexSchema.V2ModelListResponse__ModelAccessPrograms["cyber"][number], string>
+> = {
+  standard: "Standard",
+  daybreakBlue: "Daybreak Blue",
+  daybreakRed: "Daybreak Red",
 };
 
 function reasoningEffortLabel(reasoningEffort: string): string {
@@ -206,6 +215,10 @@ export function mapCodexModelCapabilities(
     ? model.defaultServiceTier
     : null;
   const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
+  const cyberAccessPrograms = model.availableAccessPrograms?.cyber ?? [];
+  const defaultCyberAccessProgram = cyberAccessPrograms.includes("standard")
+    ? "standard"
+    : cyberAccessPrograms[0];
   const optionDescriptors: ProviderOptionDescriptor[] = [];
 
   if (reasoningOptions.length > 0) {
@@ -239,6 +252,19 @@ export function mapCodexModelCapabilities(
         }),
       ],
       currentValue: defaultServiceTier,
+    });
+  }
+  if (defaultCyberAccessProgram && cyberAccessPrograms.some((program) => program !== "standard")) {
+    optionDescriptors.push({
+      id: CYBER_ACCESS_PROGRAM_OPTION_ID,
+      label: "Cyber Access",
+      type: "select",
+      options: cyberAccessPrograms.map((program) => ({
+        id: program,
+        label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
+        ...(program === defaultCyberAccessProgram ? { isDefault: true } : {}),
+      })),
+      currentValue: defaultCyberAccessProgram,
     });
   }
 
@@ -320,7 +346,15 @@ function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const firstCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const fallbackCapabilities = firstCapabilities?.optionDescriptors
+    ? {
+        ...firstCapabilities,
+        optionDescriptors: firstCapabilities.optionDescriptors.filter(
+          (descriptor) => descriptor.id !== CYBER_ACCESS_PROGRAM_OPTION_ID,
+        ),
+      }
+    : firstCapabilities;
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 

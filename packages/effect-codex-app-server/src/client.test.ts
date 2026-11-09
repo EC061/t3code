@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -244,4 +245,24 @@ it.live("reports the stderr error when the process exits before initialize", () 
       "Codex App Server process exited with code 1: Error: Missing optional dependency @openai/codex-darwin-arm64. Reinstall Codex: npm install -g @openai/codex@latest",
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("preserves cyberAccessProgram when encoding turn/start params", () =>
+  Effect.gen(function* () {
+    const encode = Schema.encodeUnknownEffect(CodexClient.V2TurnStartParamsWithCollaborationMode);
+    for (const cyberAccessProgram of ["standard", "daybreakBlue", "daybreakRed"] as const) {
+      const encoded = yield* encode({
+        threadId: "thread-1",
+        input: [{ type: "text", text: "hello", text_elements: [] }],
+        cyberAccessProgram,
+      });
+      assert.equal(encoded.cyberAccessProgram, cyberAccessProgram);
+    }
+
+    const encodedWithoutProgram = yield* encode({
+      threadId: "thread-1",
+      input: [{ type: "text", text: "hello", text_elements: [] }],
+    });
+    assert.isFalse("cyberAccessProgram" in encodedWithoutProgram);
+  }),
 );

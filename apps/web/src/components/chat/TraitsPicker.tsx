@@ -56,6 +56,7 @@ export function readPromptUltrathink(prompt: string): PromptUltrathink {
 
 const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
   agent: "Agent",
+  cyberAccessProgram: "Cyber Access",
   effort: "Effort",
   reasoningEffort: "Reasoning effort",
   variant: "Reasoning",
