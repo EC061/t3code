@@ -71,11 +71,6 @@ export function resolveCodexCyberAccessProgram(
   if (availableCyberAccessPrograms.length === 0) {
     return undefined;
   }
-  const isStandardOnly =
-    availableCyberAccessPrograms.length === 1 && availableCyberAccessPrograms[0] === "standard";
-  if (isStandardOnly) {
-    return rawSelected === undefined ? undefined : "standard";
-  }
   if (selected !== undefined && availableCyberAccessPrograms.includes(selected)) {
     return selected;
   }

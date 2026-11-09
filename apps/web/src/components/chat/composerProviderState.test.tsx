@@ -270,7 +270,16 @@ describe("getComposerProviderState", () => {
         models: modelWith(daybreakOnlyDescriptors),
         modelOptions: selections(["cyberAccessProgram", "standard"]),
       }).modelOptionsForDispatch,
-    ).toBeUndefined();
+    ).toEqual(selections(["cyberAccessProgram", "standard"]));
+
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith(daybreakOnlyDescriptors),
+        modelOptions: selections(["cyberAccessProgram", "daybreakRed"]),
+      }).modelOptionsForDispatch,
+    ).toEqual(selections(["cyberAccessProgram", "standard"]));
 
     expect(
       getComposerProviderState({

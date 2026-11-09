@@ -291,7 +291,7 @@ export function getProviderOptionCurrentValue(
     return descriptor.currentValue;
   }
   if (descriptor.id === "cyberAccessProgram") {
-    return undefined;
+    return descriptor.options.find((option) => option.id === "standard")?.id;
   }
   return descriptor.options.find((option) => option.isDefault)?.id;
 }
@@ -348,13 +348,23 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   if (!selections || selections.length === 0) {
     return undefined;
   }
-  const explicitIds = new Set(
-    withLegacyUltracodeEffort(descriptors, selections).map(({ id }) => id),
-  );
-  const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
-    (selection) => explicitIds.has(selection.id),
-  );
-  return normalized && normalized.length > 0 ? normalized : undefined;
+  const adjustedSelections = withLegacyUltracodeEffort(descriptors, selections);
+  const explicitIds = new Set(adjustedSelections.map(({ id }) => id));
+  const normalized =
+    buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter((selection) =>
+      explicitIds.has(selection.id),
+    ) ?? [];
+  const rawCyberAccessProgram = getRawSelectionValueById(adjustedSelections, "cyberAccessProgram");
+  if (
+    typeof rawCyberAccessProgram === "string" &&
+    !normalized.some((selection) => selection.id === "cyberAccessProgram") &&
+    descriptors?.some(
+      (descriptor) => descriptor.id === "cyberAccessProgram" && descriptor.type === "select",
+    )
+  ) {
+    normalized.push({ id: "cyberAccessProgram", value: "standard" });
+  }
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {

@@ -73,6 +73,12 @@ import type * as ProviderContinuationRequests from "@t3tools/provider-core/serve
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
+import {
+  buildExplicitProviderOptionSelectionsFromDescriptors,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
+import { codexModelCyberAccessPrograms } from "../../codexModelOptions.ts";
+import { mapCodexModelCapabilities } from "../../provider/CodexProvider.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
@@ -285,61 +291,150 @@ describe("CodexAdapterV2 runtime policy", () => {
             ...(availableCyberAccessPrograms === undefined ? {} : { availableCyberAccessPrograms }),
           });
 
-        // 1. Standard-only model omits cyberAccessProgram when unselected, accepts explicit standard, and downgrades stale Daybreak selections
-        const standardOnlyDefault = yield* build("gpt-6.1-sol", undefined, ["standard"]);
+        const catalogModels = [
+          {
+            slug: "gpt-6.1-sol",
+            name: "GPT-6.1 Sol",
+            isCustom: false,
+            capabilities: mapCodexModelCapabilities({
+              id: "gpt-6.1-sol",
+              model: "gpt-6.1-sol",
+              displayName: "gpt-6.1-sol",
+              description: "Standard-only model",
+              isDefault: false,
+              defaultReasoningEffort: "low",
+              supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }],
+              inputModalities: ["text"],
+              supportsPersonality: false,
+              upgrade: null,
+              availableAccessPrograms: { cyber: ["standard"] },
+            }),
+          },
+          {
+            slug: "gpt-6-sol",
+            name: "GPT-6 Sol",
+            isCustom: false,
+            capabilities: mapCodexModelCapabilities({
+              id: "gpt-6-sol",
+              model: "gpt-6-sol",
+              displayName: "gpt-6-sol",
+              description: "Dual-mode model",
+              isDefault: true,
+              defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Medium" }],
+              inputModalities: ["text"],
+              supportsPersonality: false,
+              upgrade: null,
+              availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+            }),
+          },
+          {
+            slug: "gpt-daybreak-blue-latest",
+            name: "Daybreak Blue",
+            isCustom: false,
+            capabilities: mapCodexModelCapabilities({
+              id: "gpt-daybreak-blue-latest",
+              model: "gpt-daybreak-blue-latest",
+              displayName: "Daybreak Blue",
+              description: "Dedicated Daybreak Blue model",
+              isDefault: false,
+              defaultReasoningEffort: "low",
+              supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }],
+              inputModalities: ["text"],
+              supportsPersonality: false,
+              upgrade: null,
+              availableAccessPrograms: { cyber: ["daybreakBlue"] },
+            }),
+          },
+        ] as const;
+
+        // 1. Standard-only model via production codexModelCyberAccessPrograms lookup (returns []) omits cyberAccessProgram even with stale Daybreak selection
+        const standardOnlyPrograms = codexModelCyberAccessPrograms(catalogModels, "gpt-6.1-sol");
+        assert.deepEqual(standardOnlyPrograms, []);
+
+        const standardOnlyDefault = yield* build("gpt-6.1-sol", undefined, standardOnlyPrograms);
         assert.isUndefined(standardOnlyDefault.cyberAccessProgram);
 
-        const standardOnlyExplicit = yield* build("gpt-6.1-sol", "standard", ["standard"]);
-        assert.equal(standardOnlyExplicit.cyberAccessProgram, "standard");
-
-        const switchedFromDaybreakToStandardOnly = yield* build("gpt-6.1-sol", "daybreakBlue", [
-          "standard",
-        ]);
-        assert.equal(switchedFromDaybreakToStandardOnly.cyberAccessProgram, "standard");
+        const switchedFromDaybreakToStandardOnly = yield* build(
+          "gpt-6.1-sol",
+          "daybreakBlue",
+          standardOnlyPrograms,
+        );
+        assert.isUndefined(switchedFromDaybreakToStandardOnly.cyberAccessProgram);
 
         // 2. Daybreak Blue-only model defaults to daybreakBlue, accepts explicit daybreakBlue, and never silently escalates explicit standard
-        const blueOnlyDefault = yield* build("gpt-daybreak-blue-latest", undefined, [
-          "daybreakBlue",
-        ]);
+        const blueOnlyPrograms = codexModelCyberAccessPrograms(
+          catalogModels,
+          "gpt-daybreak-blue-latest",
+        );
+        assert.deepEqual(blueOnlyPrograms, ["daybreakBlue"]);
+
+        const blueOnlyDefault = yield* build(
+          "gpt-daybreak-blue-latest",
+          undefined,
+          blueOnlyPrograms,
+        );
         assert.equal(blueOnlyDefault.cyberAccessProgram, "daybreakBlue");
 
-        const blueOnlyExplicit = yield* build("gpt-daybreak-blue-latest", "daybreakBlue", [
+        const blueOnlyExplicit = yield* build(
+          "gpt-daybreak-blue-latest",
           "daybreakBlue",
-        ]);
+          blueOnlyPrograms,
+        );
         assert.equal(blueOnlyExplicit.cyberAccessProgram, "daybreakBlue");
 
-        const blueOnlyWithStandard = yield* build("gpt-daybreak-blue-latest", "standard", [
-          "daybreakBlue",
-        ]);
+        const blueOnlyWithStandard = yield* build(
+          "gpt-daybreak-blue-latest",
+          "standard",
+          blueOnlyPrograms,
+        );
         assert.isUndefined(blueOnlyWithStandard.cyberAccessProgram);
 
+        // Composed frontend normalization -> server turn/start resolution on Daybreak-only model:
+        // explicit "standard" or unsupported "daybreakRed" must never silently escalate to "daybreakBlue".
+        const blueOnlyCaps = catalogModels[2].capabilities;
+        for (const rawProgram of ["standard", "daybreakRed"] as const) {
+          const rawSelections = [{ id: "cyberAccessProgram", value: rawProgram }];
+          const descriptors = getProviderOptionDescriptors({
+            caps: blueOnlyCaps,
+            selections: rawSelections,
+          });
+          const dispatchedOptions = buildExplicitProviderOptionSelectionsFromDescriptors(
+            descriptors,
+            rawSelections,
+          );
+          const composedTurnStart = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: "native-cyber-access",
+            codexInput: [{ type: "text", text: "security test" }],
+            runtimePolicy: policy,
+            modelSelection: {
+              instanceId,
+              model: "gpt-daybreak-blue-latest",
+              ...(dispatchedOptions ? { options: dispatchedOptions } : {}),
+            },
+            availableCyberAccessPrograms: blueOnlyPrograms,
+          });
+          assert.isUndefined(composedTurnStart.cyberAccessProgram);
+        }
+
         // 3. Model supporting Standard and Daybreak Blue defaults to standard and honors explicit selections
-        const dualDefault = yield* build("gpt-6-sol", undefined, ["standard", "daybreakBlue"]);
+        const dualPrograms = codexModelCyberAccessPrograms(catalogModels, "gpt-6-sol");
+        assert.deepEqual(dualPrograms, ["standard", "daybreakBlue"]);
+
+        const dualDefault = yield* build("gpt-6-sol", undefined, dualPrograms);
         assert.equal(dualDefault.cyberAccessProgram, "standard");
 
-        const dualExplicitStandard = yield* build("gpt-6-sol", "standard", [
-          "standard",
-          "daybreakBlue",
-        ]);
+        const dualExplicitStandard = yield* build("gpt-6-sol", "standard", dualPrograms);
         assert.equal(dualExplicitStandard.cyberAccessProgram, "standard");
 
-        const dualExplicitBlue = yield* build("gpt-6-sol", "daybreakBlue", [
-          "standard",
-          "daybreakBlue",
-        ]);
+        const dualExplicitBlue = yield* build("gpt-6-sol", "daybreakBlue", dualPrograms);
         assert.equal(dualExplicitBlue.cyberAccessProgram, "daybreakBlue");
 
         // 4. Unsupported or invalid program falls back to standard when available
-        const unsupportedRedOnDual = yield* build("gpt-6-sol", "daybreakRed", [
-          "standard",
-          "daybreakBlue",
-        ]);
+        const unsupportedRedOnDual = yield* build("gpt-6-sol", "daybreakRed", dualPrograms);
         assert.equal(unsupportedRedOnDual.cyberAccessProgram, "standard");
 
-        const invalidProgramOnDual = yield* build("gpt-6-sol", "not-a-program", [
-          "standard",
-          "daybreakBlue",
-        ]);
+        const invalidProgramOnDual = yield* build("gpt-6-sol", "not-a-program", dualPrograms);
         assert.equal(invalidProgramOnDual.cyberAccessProgram, "standard");
 
         const invalidProgramWithoutCatalog = yield* build("gpt-6-sol", "not-a-program");
